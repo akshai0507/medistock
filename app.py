@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 from pathlib import Path
+import plotly.express as px
+
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -150,170 +152,244 @@ with stock_tab:
 # TAB 2: SALES DASHBOARD
 # =====================================================
 with sales_tab:
-    st.header("📊 Medicine Sales Dashboard")
+    
+# =====================================================
+# POWER BI-STYLE SALES DASHBOARD
+# =====================================================
+with sales_tab:
+    st.header("📊 MediStock | Sales Analytics")
+    st.caption("Interactive sales reporting and medicine performance")
 
-    st.write(
-        "Find the best-selling medicines for a selected "
-        "country and month."
+    sales = df.dropna(subset=["date", "units_sold"]).copy()
+
+    sales["year"] = sales["date"].dt.year
+    sales["month"] = sales["date"].dt.month
+    sales["revenue_estimate"] = (
+        sales["units_sold"] * sales["unit_price"].fillna(0)
     )
 
-    dated_data = df.dropna(subset=["date"]).copy()
+    month_names = {
+        1: "January", 2: "February", 3: "March",
+        4: "April", 5: "May", 6: "June",
+        7: "July", 8: "August", 9: "September",
+        10: "October", 11: "November", 12: "December"
+    }
 
-    if dated_data.empty:
-        st.warning("No valid dates are available for sales analysis.")
+    # ---------------- SIDEBAR FILTERS ----------------
+    st.sidebar.header("Dashboard Filters")
+
+    country_options = ["All countries"] + sorted(
+        sales["country"].dropna().unique().tolist()
+    )
+
+    selected_country = st.sidebar.selectbox(
+        "Select country", country_options
+    )
+
+    years = sorted(
+        sales["year"].dropna().unique().astype(int).tolist(),
+        reverse=True
+    )
+
+    selected_year = st.sidebar.selectbox("Select year", years)
+
+    months = sorted(
+        sales.loc[sales["year"] == selected_year, "month"]
+        .dropna().unique().astype(int).tolist()
+    )
+
+    selected_month = st.sidebar.selectbox(
+        "Select month",
+        months,
+        format_func=lambda x: month_names[x]
+    )
+
+    # ---------------- FILTER DATA ----------------
+    year_data = sales[sales["year"] == selected_year].copy()
+
+    if selected_country != "All countries":
+        year_data = year_data[
+            year_data["country"] == selected_country
+        ]
+
+    month_data = year_data[
+        year_data["month"] == selected_month
+    ].copy()
+
+    if month_data.empty:
+        st.warning("No sales data is available for these filters.")
+        st.stop()
+
+    # ---------------- KPI CARDS ----------------
+    total_units = month_data["units_sold"].sum()
+    estimated_revenue = month_data["revenue_estimate"].sum()
+    medicine_count = month_data["medicine"].nunique()
+
+    medicine_sales = (
+        month_data.groupby("medicine", as_index=False)
+        ["units_sold"].sum()
+        .sort_values("units_sold", ascending=False)
+    )
+
+    top_medicine = medicine_sales.iloc[0]["medicine"]
+    top_units = medicine_sales.iloc[0]["units_sold"]
+
+    k1, k2, k3, k4 = st.columns(4)
+
+    k1.metric("Total Units Sold", f"{total_units:,.0f}")
+    k2.metric("Estimated Sales Value", f"{estimated_revenue:,.2f}")
+    k3.metric("Medicines Sold", f"{medicine_count:,}")
+    k4.metric("Top Medicine", str(top_medicine))
+
+    st.caption(
+        f"Reporting period: {month_names[selected_month]} "
+        f"{selected_year} | Top medicine units: {top_units:,.0f}. "
+        "Sales value is units sold × unit price; currency is unspecified."
+    )
+
+    st.divider()
+
+    # ---------------- MONTHLY SALES TREND ----------------
+    st.subheader("📈 Monthly Sales Trend")
+
+    if year_data.empty:
+        st.info("No records available for this year.")
     else:
-        dated_data["year"] = dated_data["date"].dt.year
-        dated_data["month"] = dated_data["date"].dt.month
-
-        available_years = sorted(
-            dated_data["year"].unique().tolist(),
-            reverse=True
+        monthly_trend = (
+            year_data.groupby("month", as_index=False)
+            .agg(
+                units_sold=("units_sold", "sum"),
+                sales_value=("revenue_estimate", "sum")
+            )
         )
 
-        month_names = {
-            1: "January", 2: "February", 3: "March",
-            4: "April", 5: "May", 6: "June",
-            7: "July", 8: "August", 9: "September",
-            10: "October", 11: "November", 12: "December"
-        }
+        monthly_trend["Month"] = monthly_trend["month"].map(month_names)
 
-        filter1, filter2, filter3 = st.columns(3)
-
-        with filter1:
-            dashboard_country = st.selectbox(
-                "Country",
-                ["All countries"] + countries,
-                key="sales_country"
-            )
-
-        with filter2:
-            selected_year = st.selectbox(
-                "Year",
-                available_years,
-                key="sales_year"
-            )
-
-        months_available = sorted(
-            dated_data.loc[
-                dated_data["year"] == selected_year, "month"
-            ].unique().tolist()
+        fig_trend = px.line(
+            monthly_trend,
+            x="Month",
+            y="units_sold",
+            markers=True,
+            title=f"Monthly Units Sold — {selected_year}",
+            labels={
+                "Month": "Month",
+                "units_sold": "Units Sold"
+            },
+            template="plotly_white"
         )
 
-        with filter3:
-            selected_month = st.selectbox(
-                "Month",
-                months_available,
-                format_func=lambda m: month_names[int(m)],
-                key="sales_month"
+        fig_trend.update_traces(line=dict(width=3))
+        fig_trend.update_layout(
+            height=380,
+            xaxis_title="Month",
+            yaxis_title="Units Sold"
+        )
+
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+    # ---------------- TOP MEDICINES ----------------
+    left, right = st.columns(2)
+
+    with left:
+        st.subheader("🏆 Top 10 Medicines")
+
+        top10 = medicine_sales.head(10).sort_values("units_sold")
+
+        fig_top = px.bar(
+            top10,
+            x="units_sold",
+            y="medicine",
+            orientation="h",
+            text="units_sold",
+            title="Best-Selling Medicines",
+            labels={
+                "units_sold": "Units Sold",
+                "medicine": "Medicine"
+            },
+            template="plotly_white"
+        )
+
+        fig_top.update_traces(texttemplate="%{text:,.0f}")
+        fig_top.update_layout(height=420, yaxis_title="")
+        st.plotly_chart(fig_top, use_container_width=True)
+
+    # ---------------- CATEGORY SHARE ----------------
+    with right:
+        st.subheader("🍩 Sales by Category")
+
+        if "category" in month_data.columns:
+            category_data = (
+                month_data.groupby("category", as_index=False)
+                ["units_sold"].sum()
+                .sort_values("units_sold", ascending=False)
             )
 
-        # Filter records for the selected month and year
-        monthly = dated_data[
-            (dated_data["year"] == selected_year)
-            & (dated_data["month"] == selected_month)
-        ].copy()
-
-        if dashboard_country != "All countries":
-            monthly = monthly[
-                monthly["country"] == dashboard_country
+            category_data = category_data[
+                category_data["category"].astype(str).str.strip() != ""
             ]
 
-        monthly = monthly.dropna(subset=["units_sold"])
-
-        if monthly.empty:
-            st.warning("No sales records for these filters.")
-        else:
-            # Aggregate units sold by medicine
-            sales_summary = (
-                monthly.groupby("medicine", as_index=False)
-                .agg(
-                    total_units_sold=("units_sold", "sum"),
-                    average_recorded_stock=("stock_level", "mean"),
-                    average_unit_price=("unit_price", "mean")
+            if not category_data.empty:
+                fig_category = px.pie(
+                    category_data,
+                    names="category",
+                    values="units_sold",
+                    hole=0.55,
+                    title="Share of Units Sold",
+                    template="plotly_white"
                 )
-                .sort_values("total_units_sold", ascending=False)
-            )
 
-            sales_summary["total_units_sold"] = (
-                sales_summary["total_units_sold"].round(0)
-            )
+                fig_category.update_layout(height=420)
+                st.plotly_chart(
+                    fig_category, use_container_width=True
+                )
+            else:
+                st.info("No category data available.")
+        else:
+            st.info("The dataset has no category column.")
 
-            # Dashboard metrics
-            total_units = monthly["units_sold"].sum()
-            number_of_medicines = monthly["medicine"].nunique()
-            best_seller = sales_summary.iloc[0]
+    # ---------------- COUNTRY COMPARISON ----------------
+    st.divider()
+    st.subheader("🌍 Country Sales Comparison")
 
-            m1, m2, m3 = st.columns(3)
+    country_data = (
+        sales[sales["year"] == selected_year]
+        .groupby("country", as_index=False)
+        .agg(units_sold=("units_sold", "sum"))
+        .sort_values("units_sold", ascending=False)
+        .head(10)
+    )
 
-            m1.metric(
-                "Total units sold",
-                f"{total_units:,.0f}"
-            )
+    fig_country = px.bar(
+        country_data.sort_values("units_sold"),
+        x="units_sold",
+        y="country",
+        orientation="h",
+        title=f"Top Countries by Units Sold — {selected_year}",
+        labels={
+            "units_sold": "Units Sold",
+            "country": "Country"
+        },
+        template="plotly_white"
+    )
 
-            m2.metric(
-                "Medicines recorded",
-                f"{number_of_medicines:,}"
-            )
+    fig_country.update_layout(height=420)
+    st.plotly_chart(fig_country, use_container_width=True)
 
-            m3.metric(
-                "Highest-selling medicine",
-                str(best_seller["medicine"])
-            )
+    # ---------------- DETAIL TABLE ----------------
+    st.subheader("📋 Monthly Sales Details")
 
-            st.success(
-                f"Best seller for {month_names[int(selected_month)]} "
-                f"{selected_year}: **{best_seller['medicine']}** "
-                f"with **{best_seller['total_units_sold']:,.0f} "
-                f"recorded units sold**."
-            )
+    detail = medicine_sales.copy()
+    detail.columns = ["Medicine", "Units Sold"]
 
-            # Top 10 chart
-            st.subheader("🏆 Top 10 Best-Selling Medicines")
+    st.dataframe(
+        detail,
+        use_container_width=True,
+        hide_index=True
+    )
 
-            top10 = sales_summary.head(10).set_index("medicine")
-
-            st.bar_chart(
-                top10[["total_units_sold"]],
-                horizontal=True
-            )
-
-            # Detailed ranking
-            st.subheader("Medicine Sales Ranking")
-
-            ranking = sales_summary.copy()
-            ranking.insert(
-                0, "Rank", range(1, len(ranking) + 1)
-            )
-
-            st.dataframe(
-                ranking,
-                use_container_width=True,
-                hide_index=True
-            )
-
-            # Download report
-            csv_data = sales_summary.to_csv(index=False).encode("utf-8")
-
-            st.download_button(
-                label="⬇️ Download monthly sales report",
-                data=csv_data,
-                file_name=(
-                    f"medistock_sales_{selected_year}_"
-                    f"{int(selected_month):02d}.csv"
-                ),
-                mime="text/csv"
-            )
-
-            st.caption(
-                "Sales rankings use the sum of units_sold in the "
-                "selected month. They describe the supplied dataset, "
-                "not verified sales from a specific pharmacy."
-            )
-
-st.divider()
-st.caption(
-    "MediStock Prototype | Dataset-based results | "
-    "Live pharmacy inventory is not connected yet."
-)
-
-  
+    st.download_button(
+        "⬇️ Download Sales Report",
+        data=detail.to_csv(index=False).encode("utf-8"),
+        file_name=f"medistock_sales_{selected_year}_{selected_month:02d}.csv",
+        mime="text/csv"
+    )
