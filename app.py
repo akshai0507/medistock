@@ -344,33 +344,55 @@ with sales_tab:
         else:
             st.info("The dataset has no category column.")
 
-    # ---------------- COUNTRY COMPARISON ----------------
-    st.divider()
-    st.subheader("🌍 Country Sales Comparison")
+    
+# ---------------- COUNTRY SALES COMPARISON ----------------
+st.divider()
+st.subheader("🌍 Country Sales Comparison")
 
-    country_data = (
-        sales[sales["year"] == selected_year]
-        .groupby("country", as_index=False)
+# Use the selected year and month
+country_data = sales[
+    (sales["year"] == selected_year) &
+    (sales["month"] == selected_month)
+].copy()
+
+# If a specific country is selected, filter to that country
+if selected_country != "All countries":
+    country_data = country_data[
+        country_data["country"] == selected_country
+    ]
+
+if country_data.empty:
+    st.warning("No sales data for the selected country and month.")
+else:
+    country_summary = (
+        country_data.groupby("country", as_index=False)
         .agg(units_sold=("units_sold", "sum"))
         .sort_values("units_sold", ascending=False)
-        .head(10)
     )
 
     fig_country = px.bar(
-        country_data.sort_values("units_sold"),
-        x="units_sold",
-        y="country",
-        orientation="h",
-        title=f"Top Countries by Units Sold — {selected_year}",
+        country_summary,
+        x="country",
+        y="units_sold",
+        color="country",
+        title=(
+            f"Sales by Country — {month_names[selected_month]} "
+            f"{selected_year}"
+        ),
         labels={
-            "units_sold": "Units Sold",
-            "country": "Country"
+            "country": "Country",
+            "units_sold": "Units Sold"
         },
         template="plotly_white"
     )
 
-    fig_country.update_layout(height=420)
+    fig_country.update_layout(
+        height=400,
+        showlegend=False
+    )
+
     st.plotly_chart(fig_country, use_container_width=True)
+
 
     # ---------------- DETAIL TABLE ----------------
     st.subheader("📋 Monthly Sales Details")
